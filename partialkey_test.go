@@ -7,109 +7,107 @@ import (
 	"time"
 )
 
+var keys [][]byte
+
 func init() {
+	for x := 0; x < 1000; x++ {
+		keys = append(keys, randStringBytes(8))
+	}
 	rand.Seed(time.Now().UnixNano())
 }
 
 func TestGroup(t *testing.T) {
 	g := New(10)
-	var keys [][]byte
-	for x := 0; x < 1000; x++ {
-		keys = append(keys, randStringBytes(8))
+
+	counters := make([]float64, 10)
+	for x := 0; x < len(keys); x++ {
+		t := g.Choose(keys[x])
+		counters[t]++
 	}
 
-	counters := []float64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
-	for x := 0; x < 1000; x++ {
-		counters[g.Choose(keys[x])]++
-	}
-
-	for x := 0; x < 10; x++ {
-		counters[x] = counters[x] / 1000 * 100
-	}
-
-	t.Logf("task distribution percentage %0.2f", counters)
+	t.Logf("task distribution percentage %0.2f", countersStats(counters, len(keys)))
 }
 
 func TestGroupRelease(t *testing.T) {
 	g := New(10)
-	var keys [][]byte
-	for x := 0; x < 1000; x++ {
-		keys = append(keys, randStringBytes(8))
-	}
 
-	counters := []float64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
-	for x := 0; x < 1000; x++ {
+	counters := make([]float64, 10)
+	for x := 0; x < len(keys); x++ {
 		t := g.Choose(keys[x])
 		counters[t]++
 		g.Release(t)
 	}
 
-	for x := 0; x < 10; x++ {
-		counters[x] = counters[x] / 1000 * 100
-	}
-
-	t.Logf("task distribution percentage %0.2f", counters)
+	t.Logf("task distribution percentage %0.2f", countersStats(counters, len(keys)))
 }
 
 func TestGroupExecTime(t *testing.T) {
 	g := New(10)
-	var keys [][]byte
-	for x := 0; x < 1000; x++ {
-		keys = append(keys, randStringBytes(8))
-	}
 
 	var wg sync.WaitGroup
-	counters := []float64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
+	counters := make([]float64, 10)
+	var p []chan int
 
-	for x := 0; x < 1000; x++ {
+	for x := 0; x < len(counters); x++ {
+		s := make(chan int)
+		p = append(p, s)
+		go func(s chan int, w int) {
+			for range s {
+				time.Sleep(time.Duration(w) * time.Millisecond)
+				counters[w]++
+			}
+		}(s, x)
+	}
+
+	start := time.Now()
+	for x := 0; x < len(keys); x++ {
 		wg.Add(1)
-		t := g.Choose(keys[x])
-		counters[t]++
-		go func() {
-			<-time.After(time.Millisecond * 2 * time.Duration(rand.Intn(1000)))
+		go func(x int) {
+			t := g.Choose(keys[x])
+			p[t] <- 0
 			wg.Done()
-		}()
-
+		}(x)
 	}
 
 	wg.Wait()
+	end := time.Since(start)
 
-	for x := 0; x < 10; x++ {
-		counters[x] = counters[x] / 1000 * 100
-	}
-
-	t.Logf("task distribution percentage %0.2f", counters)
+	t.Logf("Exec time %dms task distribution percentage %0.2f", end.Milliseconds(), countersStats(counters, len(keys)))
 }
 
 func TestGroupReleaseExecTime(t *testing.T) {
 	g := New(10)
-	var keys [][]byte
-	for x := 0; x < 1000; x++ {
-		keys = append(keys, randStringBytes(8))
-	}
 
 	var wg sync.WaitGroup
-	counters := []float64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
+	counters := make([]float64, 10)
+	var p []chan int
 
-	for x := 0; x < 1000; x++ {
+	for x := 0; x < len(counters); x++ {
+		s := make(chan int)
+		p = append(p, s)
+		go func(s chan int, w int) {
+			for range s {
+				time.Sleep(time.Duration(w) * time.Millisecond)
+				counters[w]++
+				g.Release(w)
+			}
+		}(s, x)
+	}
+
+	start := time.Now()
+	for x := 0; x < len(keys); x++ {
 		wg.Add(1)
-		t := g.Choose(keys[x])
-		counters[t]++
-		go func() {
-			<-time.After(time.Millisecond * 2 * time.Duration(rand.Intn(1000)))
-			g.Release(t)
+		go func(x int) {
+			t := g.Choose(keys[x])
+			p[t] <- 0
 			wg.Done()
-		}()
-
+		}(x)
 	}
 
 	wg.Wait()
+	end := time.Since(start)
 
-	for x := 0; x < 10; x++ {
-		counters[x] = counters[x] / 1000 * 100
-	}
-
-	t.Logf("task distribution percentage %0.2f", counters)
+	t.Logf("Exec time %dms task distribution percentage %0.2f", end.Milliseconds(), countersStats(counters, len(keys)))
 }
 
 const (
@@ -136,4 +134,12 @@ func randStringBytes(n int) []byte {
 	}
 
 	return b
+}
+
+func countersStats(counters []float64, tasks int) []float64 {
+	for x := 0; x < len(counters); x++ {
+		counters[x] = counters[x] / float64(tasks) * 100
+	}
+
+	return counters
 }
